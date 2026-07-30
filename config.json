@@ -1,1 +1,36 @@
-123
+{
+    "symbol": "HYPER-USDT",
+
+    "timeframe": "1m",
+
+    "leverage": 5,
+
+    "margin_mode": "isolated",
+
+    "position_size_usdt": 20,
+
+    "take_profit_percent": 1.0,
+
+    "max_average_orders": 5,
+
+    "average_step_percent": 1.0,
+
+    "max_position_size_usdt": 200,
+
+    "enable_short": false,
+
+    "paper_trading": true,
+
+    "update_interval": 1,
+
+    "telegram": {
+        "enabled": true,
+        "token": "",
+        "chat_id": ""
+    },
+
+    "bingx": {
+        "api_key": "",
+        "secret_key": ""
+    }
+}
