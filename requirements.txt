@@ -1,0 +1,14 @@
+bingx-python
+pandas
+numpy
+pandas-ta
+python-telegram-bot
+python-dotenv
+aiohttp
+websockets
+loguru
+orjson
+sqlalchemy
+aiosqlite
+tenacity
+rich
