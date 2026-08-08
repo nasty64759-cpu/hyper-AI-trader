@@ -501,3 +501,316 @@ class BingXMarket:
             (ask_price - bid_price)
             / bid_price
         ) * 100.0
+        
+# ==========================================================
+# CANDLES
+# ==========================================================
+
+    async def get_candles(
+        self,
+        interval: str = "1m",
+        limit: int = 200
+    ) -> List[dict]:
+        """
+        Получает свечи фьючерсного рынка BingX.
+
+        interval:
+            1m, 3m, 5m, 15m, 30m,
+            1h, 2h, 4h, 6h, 12h, 1d и т.д.
+
+        limit:
+            количество свечей.
+
+        Возвращает список свечей в нормализованном формате:
+        {
+            "timestamp": ...,
+            "open": ...,
+            "high": ...,
+            "low": ...,
+            "close": ...,
+            "volume": ...
+        }
+        """
+
+        if limit <= 0:
+            raise ValueError(
+                "Candle limit must be greater than zero"
+            )
+
+        if limit > 1000:
+            limit = 1000
+
+        data = await self._request(
+            method="GET",
+            endpoint="/openApi/swap/v3/quote/klines",
+            params={
+                "symbol": self.symbol,
+                "interval": interval,
+                "limit": limit
+            }
+        )
+
+        raw_candles = data.get("data")
+
+        if not raw_candles:
+            logger.error(
+                f"Empty candle response: {data}"
+            )
+            return []
+
+        candles = []
+
+        try:
+
+            for candle in raw_candles:
+
+                # BingX может возвращать свечу
+                # в виде списка либо объекта.
+
+                if isinstance(candle, dict):
+
+                    timestamp = int(
+                        candle.get(
+                            "time",
+                            candle.get("timestamp", 0)
+                        )
+                    )
+
+                    open_price = float(
+                        candle["open"]
+                    )
+
+                    high_price = float(
+                        candle["high"]
+                    )
+
+                    low_price = float(
+                        candle["low"]
+                    )
+
+                    close_price = float(
+                        candle["close"]
+                    )
+
+                    volume = float(
+                        candle.get("volume", 0)
+                    )
+
+                else:
+
+                    timestamp = int(candle[0])
+
+                    open_price = float(candle[1])
+                    high_price = float(candle[2])
+                    low_price = float(candle[3])
+                    close_price = float(candle[4])
+                    volume = float(candle[5])
+
+                candles.append(
+                    {
+                        "timestamp": timestamp,
+                        "open": open_price,
+                        "high": high_price,
+                        "low": low_price,
+                        "close": close_price,
+                        "volume": volume
+                    }
+                )
+
+        except (
+            KeyError,
+            IndexError,
+            TypeError,
+            ValueError
+        ) as exc:
+
+            logger.error(
+                f"Unable to parse candles: {data}"
+            )
+
+            raise ValueError(
+                "Unable to parse BingX candle data"
+            ) from exc
+
+        # Старые свечи → новые свечи.
+        candles.sort(
+            key=lambda candle: candle["timestamp"]
+        )
+
+        return candles
+
+    # ======================================================
+
+    async def get_1m_candles(
+        self,
+        limit: int = 200
+    ) -> List[dict]:
+        """
+        Получает минутные свечи.
+        """
+
+        return await self.get_candles(
+            interval="1m",
+            limit=limit
+        )
+
+    # ======================================================
+
+    async def get_5m_candles(
+        self,
+        limit: int = 200
+    ) -> List[dict]:
+        """
+        Получает 5-минутные свечи.
+        """
+
+        return await self.get_candles(
+            interval="5m",
+            limit=limit
+        )
+
+    # ======================================================
+
+    async def get_15m_candles(
+        self,
+        limit: int = 200
+    ) -> List[dict]:
+        """
+        Получает 15-минутные свечи.
+        """
+
+        return await self.get_candles(
+            interval="15m",
+            limit=limit
+        )
+
+
+# ==========================================================
+# MARKET SNAPSHOT
+# ==========================================================
+
+    async def get_market_snapshot(
+        self,
+        candle_limit: int = 200
+    ) -> MarketSnapshot:
+        """
+        Получает полный снимок рынка.
+
+        В одном объекте собираются:
+
+        - текущая цена;
+        - Mark Price;
+        - Funding Rate;
+        - Open Interest;
+        - Bid;
+        - Ask;
+        - объёмы Bid/Ask;
+        - Spread;
+        - свечи 1m;
+        - свечи 5m;
+        - свечи 15m.
+
+        Этот объект будет основным источником
+        данных для indicators.py и strategy.py.
+        """
+
+        logger.debug(
+            f"Updating market snapshot: {self.symbol}"
+        )
+
+        (
+            price,
+            mark_price,
+            funding_rate,
+            open_interest,
+            best_bid,
+            best_ask,
+            bid_volume,
+            ask_volume,
+            candles_1m,
+            candles_5m,
+            candles_15m
+        ) = await asyncio.gather(
+
+            self.get_price(),
+
+            self.get_mark_price(),
+
+            self.get_funding_rate(),
+
+            self.get_open_interest(),
+
+            self.get_best_bid_ask(),
+
+            self.get_1m_candles(
+                limit=candle_limit
+            ),
+
+            self.get_5m_candles(
+                limit=candle_limit
+            ),
+
+            self.get_15m_candles(
+                limit=candle_limit
+            )
+        )
+
+        # get_best_bid_ask() возвращает кортеж.
+        #
+        # Поэтому asyncio.gather() вернул его
+        # как один отдельный элемент.
+        #
+        # Распакуем его здесь.
+
+        (
+            best_bid,
+            best_ask,
+            bid_volume,
+            ask_volume
+        ) = best_bid
+
+        spread = best_ask - best_bid
+
+        snapshot = MarketSnapshot(
+
+            symbol=self.symbol,
+
+            price=price,
+
+            mark_price=mark_price,
+
+            funding_rate=funding_rate,
+
+            open_interest=open_interest,
+
+            bid_price=best_bid,
+
+            ask_price=best_ask,
+
+            spread=spread,
+
+            bid_volume=bid_volume,
+
+            ask_volume=ask_volume,
+
+            timestamp=self._timestamp(),
+
+            candles_1m=candles_1m,
+
+            candles_5m=candles_5m,
+
+            candles_15m=candles_15m
+        )
+
+        self.last_snapshot = snapshot
+
+        logger.debug(
+            f"Market snapshot updated | "
+            f"{self.symbol} | "
+            f"price={price} | "
+            f"mark={mark_price} | "
+            f"funding={funding_rate} | "
+            f"OI={open_interest}"
+        )
+
+        return snapshot
