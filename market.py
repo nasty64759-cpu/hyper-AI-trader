@@ -814,3 +814,389 @@ class BingXMarket:
         )
 
         return snapshot
+        
+# ==========================================================
+# MARKET STATUS / HELPERS
+# ==========================================================
+
+    async def refresh(self) -> MarketSnapshot:
+        """
+        Обновляет и возвращает текущий MarketSnapshot.
+
+        Это основной метод, который впоследствии будет
+        вызываться торговым циклом.
+        """
+
+        return await self.get_market_snapshot()
+
+
+    # ======================================================
+
+    def get_last_snapshot(
+        self
+    ) -> Optional[MarketSnapshot]:
+        """
+        Возвращает последний полученный снимок рынка.
+
+        Если snapshot ещё ни разу не получался,
+        возвращает None.
+        """
+
+        return self.last_snapshot
+
+
+    # ======================================================
+
+    def get_last_price(self) -> float:
+        """
+        Возвращает последнюю известную цену.
+
+        Важно:
+        это локально сохранённое значение, а не новый
+        запрос к BingX.
+        """
+
+        return self.last_price
+
+
+    # ======================================================
+
+    async def ping(self) -> bool:
+        """
+        Проверяет доступность API BingX.
+
+        Используется для диагностики соединения.
+        """
+
+        try:
+
+            await self.get_price()
+
+            return True
+
+        except Exception as exc:
+
+            logger.warning(
+                f"BingX API ping failed: {exc}"
+            )
+
+            return False
+
+
+    # ======================================================
+
+    async def wait_for_connection(
+        self,
+        attempts: int = 5,
+        delay: float = 2.0
+    ) -> bool:
+        """
+        Пытается дождаться доступности BingX API.
+
+        Полезно при запуске VPS, когда сеть может
+        подняться не мгновенно.
+        """
+
+        for attempt in range(1, attempts + 1):
+
+            if await self.ping():
+
+                logger.success(
+                    "BingX API connection established"
+                )
+
+                return True
+
+            logger.warning(
+                f"BingX connection attempt "
+                f"{attempt}/{attempts} failed"
+            )
+
+            if attempt < attempts:
+
+                await asyncio.sleep(delay)
+
+        logger.error(
+            "Unable to connect to BingX API"
+        )
+
+        return False
+
+
+# ==========================================================
+# CONTEXT MANAGER
+# ==========================================================
+
+    async def __aenter__(self):
+        """
+        Позволяет использовать:
+
+            async with BingXMarket() as market:
+                ...
+        """
+
+        await self.connect()
+
+        return self
+
+
+    async def __aexit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback
+    ):
+        """
+        Автоматически закрывает HTTP-сессию.
+        """
+
+        await self.close()
+
+
+# ==========================================================
+# TEST / DEBUG
+# ==========================================================
+
+async def test_market():
+    """
+    Локальный тест market.py.
+
+    Этот тест НЕ открывает никаких сделок.
+
+    Он только проверяет получение рыночных данных.
+    """
+
+    logger.info(
+        "Starting market.py diagnostic test..."
+    )
+
+    async with BingXMarket() as market:
+
+        # --------------------------------------------------
+        # Проверяем API
+        # --------------------------------------------------
+
+        connected = await market.wait_for_connection()
+
+        if not connected:
+
+            logger.error(
+                "Market test failed: "
+                "BingX API unavailable"
+            )
+
+            return
+
+        # --------------------------------------------------
+        # Получаем цену
+        # --------------------------------------------------
+
+        price = await market.get_price()
+
+        logger.info(
+            f"Current price: {price}"
+        )
+
+        # --------------------------------------------------
+        # Mark Price
+        # --------------------------------------------------
+
+        mark_price = await market.get_mark_price()
+
+        logger.info(
+            f"Mark price: {mark_price}"
+        )
+
+        # --------------------------------------------------
+        # Funding
+        # --------------------------------------------------
+
+        funding = await market.get_funding_rate()
+
+        logger.info(
+            f"Funding rate: {funding}"
+        )
+
+        # --------------------------------------------------
+        # Open Interest
+        # --------------------------------------------------
+
+        open_interest = await market.get_open_interest()
+
+        logger.info(
+            f"Open interest: {open_interest}"
+        )
+
+        # --------------------------------------------------
+        # Orderbook
+        # --------------------------------------------------
+
+        (
+            bid,
+            ask,
+            bid_volume,
+            ask_volume
+        ) = await market.get_best_bid_ask()
+
+        logger.info(
+            f"Best bid: {bid}"
+        )
+
+        logger.info(
+            f"Best ask: {ask}"
+        )
+
+        logger.info(
+            f"Bid volume: {bid_volume}"
+        )
+
+        logger.info(
+            f"Ask volume: {ask_volume}"
+        )
+
+        # --------------------------------------------------
+        # Spread
+        # --------------------------------------------------
+
+        spread = ask - bid
+
+        logger.info(
+            f"Spread: {spread}"
+        )
+
+        if bid > 0:
+
+            spread_percent = (
+                spread / bid
+            ) * 100
+
+            logger.info(
+                f"Spread %: "
+                f"{spread_percent:.6f}%"
+            )
+
+        # --------------------------------------------------
+        # Candles
+        # --------------------------------------------------
+
+        candles_1m = await market.get_1m_candles(
+            limit=10
+        )
+
+        candles_5m = await market.get_5m_candles(
+            limit=10
+        )
+
+        candles_15m = await market.get_15m_candles(
+            limit=10
+        )
+
+        logger.info(
+            f"1m candles received: "
+            f"{len(candles_1m)}"
+        )
+
+        logger.info(
+            f"5m candles received: "
+            f"{len(candles_5m)}"
+        )
+
+        logger.info(
+            f"15m candles received: "
+            f"{len(candles_15m)}"
+        )
+
+        # --------------------------------------------------
+        # Full snapshot
+        # --------------------------------------------------
+
+        snapshot = await market.get_market_snapshot(
+            candle_limit=50
+        )
+
+        logger.success(
+            "Market snapshot successfully received"
+        )
+
+        logger.info(
+            f"Symbol: {snapshot.symbol}"
+        )
+
+        logger.info(
+            f"Price: {snapshot.price}"
+        )
+
+        logger.info(
+            f"Mark price: {snapshot.mark_price}"
+        )
+
+        logger.info(
+            f"Funding: {snapshot.funding_rate}"
+        )
+
+        logger.info(
+            f"Open interest: "
+            f"{snapshot.open_interest}"
+        )
+
+        logger.info(
+            f"1m candles: "
+            f"{len(snapshot.candles_1m)}"
+        )
+
+        logger.info(
+            f"5m candles: "
+            f"{len(snapshot.candles_5m)}"
+        )
+
+        logger.info(
+            f"15m candles: "
+            f"{len(snapshot.candles_15m)}"
+        )
+
+        # --------------------------------------------------
+        # Последняя свеча
+        # --------------------------------------------------
+
+        if snapshot.candles_1m:
+
+            candle = snapshot.candles_1m[-1]
+
+            logger.info(
+                "Latest 1m candle:"
+            )
+
+            logger.info(
+                f"  Open: {candle['open']}"
+            )
+
+            logger.info(
+                f"  High: {candle['high']}"
+            )
+
+            logger.info(
+                f"  Low: {candle['low']}"
+            )
+
+            logger.info(
+                f"  Close: {candle['close']}"
+            )
+
+            logger.info(
+                f"  Volume: {candle['volume']}"
+            )
+
+    logger.success(
+        "Market test completed"
+    )
+
+
+# ==========================================================
+# DIRECT EXECUTION
+# ==========================================================
+
+if __name__ == "__main__":
+
+    asyncio.run(
+        test_market()
+    )
